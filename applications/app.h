@@ -54,5 +54,5 @@ void app_nunchuk_update_output(chuck_data *data);
 void app_custom_start(void);
 void app_custom_stop(void);
 void app_custom_configure(app_configuration *conf);
-
+void app_mag_init(void);
 #endif /* APP_H_ */
