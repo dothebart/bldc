@@ -74,6 +74,7 @@ void app_init(app_configuration *conf) {
 		hw_stop_i2c();
 		app_sten_init();
 #endif
+		app_mag_init();
 		break;
 
 	default:
