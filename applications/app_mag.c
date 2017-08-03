@@ -28,8 +28,8 @@
  *              +- ADC2 connector
  * 
  *   1,2: Reed switch opening on approach
- *   Reed 1: Kill Switch
- *   Reed 2: Range Switch / measure RPM
+ *   Reed 1: Kill Switch (Brown/Red)
+ *   Reed 2: Range Switch / measure RPM (Red/orange)
  * XXXXX: 10kOhm resistor
  *
  * The cruise control will provide a maximum speed where acceleration
@@ -76,6 +76,8 @@ float adc1_value1;
 float adc1_value2;
 float current_out;
 float want_rpm;
+float rpm_filtered;
+float measure_rpm;
 int maxspeed = 25;
 int umfang_mm = 1860;
 
@@ -92,7 +94,10 @@ const char *magCommands[] = {
 int testint = 1337;
 int breakactive = 0;
 void killswitch_state_command(int argc, const char ** argv) {
-	commands_printf("Current killswitch status: %d - %d - %g %g %g %g %g | %d", killswitch_deployed, rangeswitch_deployed, (double)adc2_value,  (double)adc1_value, (double)adc1_value1, (double)adc1_value2, (double)current_out, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
+	commands_printf("Current killswitch status: %d - %d - %g %g %g frpm: %g wrpm: %g hrpm: %g | %d",
+			killswitch_deployed, rangeswitch_deployed,
+			(double)adc2_value,  (double)adc1_value, (double)adc1_value1,
+			(double)rpm_filtered, (double)want_rpm, (double)measure_rpm, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
 }
 // Current killswitch status: 0 - 0 -                                                                                      1.112088     1.000000    0.935604     inf          0.000000
 //void broadcastState(unsigned char *data, unsigned int len) {}
@@ -106,6 +111,7 @@ void app_mag_init(void) {
 	chThdCreateStatic(mag_thread_wa, sizeof(mag_thread_wa),
 		NORMALPRIO, mag_thread, NULL);
 	want_rpm = config.rpm_lim_start;
+	rpm_filtered = 0.0;
 }
 
 static THD_FUNCTION(mag_thread, arg) {
@@ -136,6 +142,20 @@ static THD_FUNCTION(mag_thread, arg) {
 		// Current killswitch status: 0 - 0 - 1.112088
 		// Current killswitch status: 0 - 1 - 1.635092
 
+		// measure physical RPMs by reed switch.
+		if (config.rev_button_inverted){
+			static int switch_deployed = 0;
+			static int pass_counter = 0;
+			if ((switch_deployed == 0) && (rangeswitch_deployed == 1)) {
+				measure_rpm = 60.0 / (( CH_CFG_ST_FREQUENCY / config.update_rate_hz ) * pass_counter);
+				pass_counter = 0;
+				switch_deployed = 1;
+			}
+			else {
+				pass_counter ++;
+				switch_deployed = rangeswitch_deployed;
+			}
+		}
 		// ============================================
 		// Read & map the input from the hall generator
 		// 
@@ -172,6 +192,7 @@ static THD_FUNCTION(mag_thread, arg) {
 		adc1_value = pwr = adc1_value2;
 
 		if (killswitch_deployed) {
+			rpm_filtered = 0.0;
 			current_out = 0.0;
 			want_rpm = config.rpm_lim_start;
 			mc_interface_set_brake_current(timeout_get_brake_current());
@@ -199,7 +220,6 @@ static THD_FUNCTION(mag_thread, arg) {
 			filter_ptr = 0;
 		}
 
-		float rpm_filtered = 0.0;
 		for (int i = 0;i < RPM_FILTER_SAMPLES;i++) {
 			rpm_filtered += filter_buffer[i];
 		}
