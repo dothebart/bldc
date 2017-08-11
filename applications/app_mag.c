@@ -44,7 +44,8 @@
  * 0.3 
  * 
  * When the 'Invert reverse button' is checked, we will output measured
- * physical rpms via the commandline.
+ * physical rpms via the commandline. This evaluates to 256 Rotations
+ * for the trio bafang.
  *
  * TODO: howto calculate the power we give? we have to limit at 250W
  * via the current.
@@ -80,8 +81,14 @@ float rpm_filtered;
 float measure_rpm;
 int maxspeed = 25;
 int umfang_mm = 1860;
-
+systime_t deltaT;
+systime_t now;
+int rev_counter = 0;
+int tacho_count = 0;
 // M_PI;
+static int switch_deployed = 0;
+static int pass_counter = 0;
+static systime_t last_time = 1;
 
 // Example thread
 static THD_FUNCTION(mag_thread, arg);
@@ -94,10 +101,11 @@ const char *magCommands[] = {
 int testint = 1337;
 int breakactive = 0;
 void killswitch_state_command(int argc, const char ** argv) {
-	commands_printf("Current killswitch status: %d - %d - %g %g %g frpm: %g wrpm: %g hrpm: %g | %d",
-			killswitch_deployed, rangeswitch_deployed,
+	commands_printf("Current killswitch status: %d - %d - %d - %g %g %g frpm: %g wrpm: %g hrpm: %g | %d | %d",
+			killswitch_deployed, rangeswitch_deployed, deltaT,
 			(double)adc2_value,  (double)adc1_value, (double)adc1_value1,
-			(double)rpm_filtered, (double)want_rpm, (double)measure_rpm, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
+			(double)rpm_filtered, (double)want_rpm, (double)measure_rpm,
+			tacho_count, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
 }
 // Current killswitch status: 0 - 0 -                                                                                      1.112088     1.000000    0.935604     inf          0.000000
 //void broadcastState(unsigned char *data, unsigned int len) {}
@@ -118,14 +126,15 @@ static THD_FUNCTION(mag_thread, arg) {
 	(void)arg;
  
 	chRegSetThreadName("APP_MAG");
-	for(;;) {
-		// Sleep for a time according to the specified rate
-		systime_t sleep_time = CH_CFG_ST_FREQUENCY / config.update_rate_hz;
+	// Sleep for a time according to the specified rate
+	systime_t sleep_time = CH_CFG_ST_FREQUENCY / config.update_rate_hz;
 
-		// At least one tick should be slept to not block the other threads
-		if (sleep_time == 0) {
-			sleep_time = 1;
-		}
+	// At least one tick should be slept to not block the other threads
+	if (sleep_time == 0) {
+		sleep_time = 1;
+	}
+	
+	for(;;) {
 		chThdSleep(sleep_time);
 
 		// ============================================
@@ -144,10 +153,15 @@ static THD_FUNCTION(mag_thread, arg) {
 
 		// measure physical RPMs by reed switch.
 		if (config.rev_button_inverted){
-			static int switch_deployed = 0;
-			static int pass_counter = 0;
 			if ((switch_deployed == 0) && (rangeswitch_deployed == 1)) {
-				measure_rpm = 60.0 / (( CH_CFG_ST_FREQUENCY / config.update_rate_hz ) * pass_counter);
+				rev_counter ++;
+				tacho_count = mc_interface_get_tachometer_value(true);
+				if (rev_counter == 100) {
+					now = chVTGetSystemTime();
+					deltaT = ST2S(now - last_time);
+					last_time = now;
+					rev_counter = 0;
+				}
 				pass_counter = 0;
 				switch_deployed = 1;
 			}
@@ -225,7 +239,7 @@ static THD_FUNCTION(mag_thread, arg) {
 		}
 		rpm_filtered /= RPM_FILTER_SAMPLES;
 
-		if (pwr > 0.5) {
+		if (pwr > 0.55) {
 			if (want_rpm < config.rpm_lim_end) {
 				want_rpm += 1.0;
 			}
@@ -240,11 +254,15 @@ static THD_FUNCTION(mag_thread, arg) {
 				}
 			}
 		}
+		else if (pwr > 0.45) {
+			// Sweet spot! stay here!
+			continue;
+		}
 		else {
 			if (want_rpm > config.rpm_lim_start) {
 				want_rpm -= 1.0;
 			}
-			if ((pwr < 0.25) || (rpm_filtered - want_rpm > 10.0)) {
+			if ((pwr < 0.2) || (rpm_filtered - want_rpm > 10.0)) {
 				if (current > mcconf->l_current_min) {
 					current -= 1.0;
 				}
