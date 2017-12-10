@@ -25,12 +25,30 @@
  * - -+--XXXXX--+--XXXX--+--XXXX--- + 3.3V
  *    |         |        |
  *    +----1----+---2----+
+ *              +- ADC2 connector
  * 
  *   1,2: Reed switch opening on approach
+ *   Reed 1: Kill Switch (Brown/Red)
+ *   Reed 2: Range Switch / measure RPM (Red/orange)
  * XXXXX: 10kOhm resistor
  *
  * The cruise control will provide a maximum speed where acceleration
  * stops.
+ * 
+ * The Allegro values are mapped from 0.0 to 1.0.
+ * 0.5 is the magic balance spot which we try to keep. 
+ * our primary scale is RPM. If above 0.5 we increase the RPM to reach.
+ * once the RPMs we try to reach, and that we set reach a delta of 10, 
+ * we put more bang to it by increasing the voltage. 
+ * we reduce the voltage once the 0.5 are undergone, der RPMs once its below
+ * 0.3 
+ * 
+ * When the 'Invert reverse button' is checked, we will output measured
+ * physical rpms via the commandline. This evaluates to 256 Rotations
+ * for the trio bafang.
+ *
+ * TODO: howto calculate the power we give? we have to limit at 250W
+ * via the current.
  *
  * Optionally a bluetooth sensor will later on be added to transmit the 
  * crank rotations from the pulling bike.
@@ -58,6 +76,9 @@ float adc1_value;
 float adc1_value1;
 float adc1_value2;
 float current_out;
+float want_rpm;
+float rpm_filtered;
+float measure_rpm;
 
 /* TODO where to get these? */
 float rpm_lim_start = 0.0;
@@ -65,8 +86,14 @@ float rpm_lim_end = 1.1;
 
 int maxspeed = 25;
 int umfang_mm = 1860;
-
+systime_t deltaT;
+systime_t now;
+int rev_counter = 0;
+int tacho_count = 0;
 // M_PI;
+static int switch_deployed = 0;
+static int pass_counter = 0;
+static systime_t last_time = 1;
 
 // Example thread
 static THD_FUNCTION(mag_thread, arg);
@@ -80,7 +107,11 @@ const char *magCommands[] = {
 int testint = 1337;
 int breakactive = 0;
 void killswitch_state_command(int argc, const char ** argv) {
-	commands_printf("Current killswitch status: %d - %d - %g %g %g %g %g | %d", killswitch_deployed, rangeswitch_deployed, (double)adc2_value,  (double)adc1_value, (double)adc1_value1, (double)adc1_value2, (double)current_out, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
+	commands_printf("Current killswitch status: %d - %d - %d - %g %g %g frpm: %g wrpm: %g hrpm: %g | %d | %d",
+			killswitch_deployed, rangeswitch_deployed, deltaT,
+			(double)adc2_value,  (double)adc1_value, (double)adc1_value1,
+			(double)rpm_filtered, (double)want_rpm, (double)measure_rpm,
+			tacho_count, breakactive); // (double)config.voltage_start, (double)config.voltage_end);
 }
 // Current killswitch status: 0 - 0 -                                                                                      1.112088     1.000000    0.935604     inf          0.000000
 //void broadcastState(unsigned char *data, unsigned int len) {}
@@ -96,20 +127,23 @@ void app_mag_init(void) {
 	// Start the example thread
 	chThdCreateStatic(mag_thread_wa, sizeof(mag_thread_wa),
 		NORMALPRIO, mag_thread, NULL);
+	want_rpm = /*config.*/rpm_lim_start;
+	rpm_filtered = 0.0;
 }
 
 static THD_FUNCTION(mag_thread, arg) {
 	(void)arg;
  
 	chRegSetThreadName("APP_MAG");
-	for(;;) {
-		// Sleep for a time according to the specified rate
-		systime_t sleep_time = CH_CFG_ST_FREQUENCY / config.update_rate_hz;
+	// Sleep for a time according to the specified rate
+	systime_t sleep_time = CH_CFG_ST_FREQUENCY / config.update_rate_hz;
 
-		// At least one tick should be slept to not block the other threads
-		if (sleep_time == 0) {
-			sleep_time = 1;
-		}
+	// At least one tick should be slept to not block the other threads
+	if (sleep_time == 0) {
+		sleep_time = 1;
+	}
+	
+	for(;;) {
 		chThdSleep(sleep_time);
 
 		// ============================================
@@ -126,6 +160,25 @@ static THD_FUNCTION(mag_thread, arg) {
 		// Current killswitch status: 0 - 0 - 1.112088
 		// Current killswitch status: 0 - 1 - 1.635092
 
+		// measure physical RPMs by reed switch.
+		if (config.rev_button_inverted){
+			if ((switch_deployed == 0) && (rangeswitch_deployed == 1)) {
+				rev_counter ++;
+				tacho_count = mc_interface_get_tachometer_value(true);
+				if (rev_counter == 100) {
+					now = chVTGetSystemTime();
+					deltaT = ST2S(now - last_time);
+					last_time = now;
+					rev_counter = 0;
+				}
+				pass_counter = 0;
+				switch_deployed = 1;
+			}
+			else {
+				pass_counter ++;
+				switch_deployed = rangeswitch_deployed;
+			}
+		}
 		// ============================================
 		// Read & map the input from the hall generator
 		// 
@@ -154,46 +207,20 @@ static THD_FUNCTION(mag_thread, arg) {
 		}
 		// Map and truncate the read voltage
 		adc1_value1 = pwr;
-		// TODO: ranges not saved from the UI??? pwr = utils_map(pwr, config.voltage_start, config.voltage_end, 0.0, 1.0);
-		pwr = utils_map(pwr, 0.5, 1.73, 0.0, 1.0);
-		adc1_value2 = pwr;
-		utils_truncate_number(&pwr, 0.0, 1.0);
-		adc1_value = pwr;
+		adc1_value2 = utils_map(adc1_value1, config.voltage_start, config.voltage_end, 0.0, 1.0);
+		utils_truncate_number(&adc1_value2, 0.0, 1.0);
+		if (config.voltage_inverted) {
+			adc1_value2 = 1.0 - adc1_value2;
+		}
+		adc1_value = pwr = adc1_value2;
 
 		if (killswitch_deployed) {
+			rpm_filtered = 0.0;
 			current_out = 0.0;
+			want_rpm = /*config.*/rpm_lim_start;
 			mc_interface_set_brake_current(timeout_get_brake_current());
 			continue;
 		}
-
-		switch (config.ctrl_type) {
-		case ADC_CTRL_TYPE_CURRENT_REV_CENTER:
-		case ADC_CTRL_TYPE_CURRENT_NOREV_BRAKE_CENTER:
-		case ADC_CTRL_TYPE_DUTY_REV_CENTER:
-			// Scale the voltage and set 0 at the center
-			pwr *= 2.0;
-			pwr -= 1.0;
-			break;
-
-		case ADC_CTRL_TYPE_CURRENT_NOREV_BRAKE_ADC:
-			break;
-
-		case ADC_CTRL_TYPE_CURRENT_REV_BUTTON:
-		case ADC_CTRL_TYPE_CURRENT_NOREV_BRAKE_BUTTON:
-		case ADC_CTRL_TYPE_DUTY_REV_BUTTON:
-			// Invert the voltage if the button is pressed
-			// if (rev_button) {
-			//	pwr = -pwr;
-			//}
-			break;
-
-		case ADC_CTRL_TYPE_CURRENT:
-
-			break;
-		default:
-			break;
-		}
-
 
                 // Apply deadband
 		utils_deadband(&pwr, config.hyst, 1.0);
@@ -201,34 +228,12 @@ static THD_FUNCTION(mag_thread, arg) {
 		float rpm_local = mc_interface_get_rpm();
 		float rpm_lowest = rpm_local;
 
-		float current = 0.0;
+		static float current = 0.0;
 		bool current_mode_brake = false;
 		const volatile mc_configuration *mcconf = mc_interface_get_configuration();
-	
-	       
-		// If safe start is enabled and the output has not been zero for long enough
-		/*
-		if (fabsf(pwr) < 0.001) {
-			ms_without_power += (1000.0 * (float)sleep_time) / (float)CH_CFG_ST_FREQUENCY;
-		}
-
-		if (ms_without_power < MIN_MS_WITHOUT_POWER && config.safe_start) {
-			static int pulses_without_power_before = 0;
-			if (ms_without_power == pulses_without_power_before) {
-				ms_without_power = 0;
-			}
-			pulses_without_power_before = ms_without_power;
-			mc_interface_set_brake_current(timeout_get_brake_current());
-
-			continue;
-		}		
-
-		*/
 		
 		// Reset timeout
 		timeout_reset();
-
-
 		
 		// Filter RPM to avoid glitches
 		static float filter_buffer[RPM_FILTER_SAMPLES];
@@ -238,70 +243,46 @@ static THD_FUNCTION(mag_thread, arg) {
 			filter_ptr = 0;
 		}
 
-		float rpm_filtered = 0.0;
 		for (int i = 0;i < RPM_FILTER_SAMPLES;i++) {
 			rpm_filtered += filter_buffer[i];
 		}
 		rpm_filtered /= RPM_FILTER_SAMPLES;
 
-
-
-/*
-		if (current_mode && cc_button && fabsf(pwr) < 0.001) {
-			static float pid_rpm = 0.0;
-
-			if (!was_pid) {
-				was_pid = true;
-				pid_rpm = rpm_filtered;
+		if (pwr > 0.55) {
+			if (want_rpm < /*config.*/rpm_lim_end) {
+				want_rpm += 1.0;
 			}
-
-			mc_interface_set_pid_speed(pid_rpm);
-			continue;
-		}
-*/
-		if (current_mode_brake) {
-			breakactive = 1;
-			mc_interface_set_brake_current(current);
-		} else {
-			breakactive = 0;
-			// Apply soft RPM limit
-			if (rpm_lowest > /*config.*/rpm_lim_end && current > 0.0) {
-				current = mcconf->cc_min_current;
-			} else if (rpm_lowest > /*config.*/rpm_lim_start && current > 0.0) {
-				current = utils_map(rpm_lowest, /*config.*/rpm_lim_start, /*config.*/rpm_lim_end, current, mcconf->cc_min_current);
-			} else if (rpm_lowest < - /*config.*/rpm_lim_end && current < 0.0) {
-				current = mcconf->cc_min_current;
-			} else if (rpm_lowest < - /*config.*/rpm_lim_start && current < 0.0) {
-				rpm_lowest = -rpm_lowest;
-				current = -current;
-				current = utils_map(rpm_lowest, /*config.*/rpm_lim_start, /*config.*/rpm_lim_end, current, mcconf->cc_min_current);
-				current = -current;
-				rpm_lowest = -rpm_lowest;
+			if (want_rpm > /*config.*/rpm_lim_end) {
+				want_rpm = /*config.*/rpm_lim_end;
 			}
-			else {
-				if (pwr >= 0.0) {
-					current = pwr * mcconf->l_current_max;
-				} else {
-					current = pwr * fabsf(mcconf->l_current_min);
+			// if either want rpm vs. have outgrows a limit,
+			// or the throttle demand is bigger, we add more power:
+			if ((pwr > 0.75) || (want_rpm - rpm_filtered > 10.0)) {
+				if (current < mcconf->l_current_max) {
+					current += 1.0;
 				}
 			}
-
-			float current_out = current;
-			bool is_reverse = false;
-			if (current_out < 0.0) {
-				is_reverse = true;
-				current_out = -current_out;
-				current = -current;
-				rpm_local = -rpm_local;
-				rpm_lowest = -rpm_lowest;
+		}
+		else if (pwr > 0.45) {
+			// Sweet spot! stay here!
+			continue;
+		}
+		else {
+			if (want_rpm > /*config.*/rpm_lim_start) {
+				want_rpm -= 1.0;
 			}
-
-
-			if (is_reverse) {
-				mc_interface_set_current(-current_out);
-			} else {
-				mc_interface_set_current(current_out);
+			if ((pwr < 0.2) || (rpm_filtered - want_rpm > 10.0)) {
+				if (current > mcconf->l_current_min) {
+					current -= 1.0;
+				}
+				if (current < 0.0) {
+					current = 0.0;
+				}
 			}
 		}
+
+		mc_interface_set_pid_speed(want_rpm);
+		mc_interface_set_current(current);
+
 	}
 }
