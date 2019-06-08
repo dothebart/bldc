@@ -224,6 +224,25 @@ static THD_FUNCTION(mag_thread, arg) {
 
                 // Apply deadband
 		utils_deadband(&pwr, config.hyst, 1.0);
+
+
+		// Apply throttle curve
+		pwr = utils_throttle_curve(pwr, config.throttle_exp, config.throttle_exp_brake, config.throttle_exp_mode);
+
+		// Apply ramping
+		static systime_t last_time = 0;
+		static float pwr_ramp = 0.0;
+		const float ramp_time = fabsf(pwr) > fabsf(pwr_ramp) ? config.ramp_time_pos : config.ramp_time_neg;
+
+		if (ramp_time > 0.01) {
+			const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(last_time)) / (ramp_time * 1000.0);
+			utils_step_towards(&pwr_ramp, pwr, ramp_step);
+			last_time = chVTGetSystemTimeX();
+			pwr = pwr_ramp;
+		}
+
+
+
 		
 		float rpm_local = mc_interface_get_rpm();
 		float rpm_lowest = rpm_local;
