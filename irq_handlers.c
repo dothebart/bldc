@@ -23,18 +23,8 @@
 #include "isr_vector_table.h"
 #include "mc_interface.h"
 #include "mcpwm_foc.h"
-#include "servo.h"
 #include "hw.h"
 #include "encoder.h"
-
-#if SERVO_OUT_ENABLE && !SERVO_OUT_SIMPLE
-CH_IRQ_HANDLER(TIM7_IRQHandler) {
-	CH_IRQ_PROLOGUE();
-	TIM_ClearITPendingBit(TIM7, TIM_IT_Update);
-	servo_irq();
-	CH_IRQ_EPILOGUE();
-}
-#endif
 
 CH_IRQ_HANDLER(ADC1_2_3_IRQHandler) {
 	CH_IRQ_PROLOGUE();
@@ -67,5 +57,17 @@ CH_IRQ_HANDLER(TIM8_CC_IRQHandler) {
 
 		// Clear the IT pending bit
 		TIM_ClearITPendingBit(TIM8, TIM_IT_CC1);
+	}
+}
+
+CH_IRQ_HANDLER(PVD_IRQHandler) {
+	if (EXTI_GetITStatus(EXTI_Line16) != RESET) {
+		// Log the fault. Supply voltage dropped below 2.9V,
+		// could corrupt an ongoing flash programming
+		mc_interface_fault_stop(FAULT_CODE_MCU_UNDER_VOLTAGE);
+
+		// Clear the PVD pending bit
+		EXTI_ClearITPendingBit(EXTI_Line16);
+		EXTI_ClearFlag(EXTI_Line16);
 	}
 }

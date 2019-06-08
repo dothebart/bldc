@@ -16,12 +16,10 @@
     */
 
 #include "hw.h"
-#ifdef HW_VERSION_60
 
 #include "ch.h"
 #include "hal.h"
 #include "stm32f4xx_conf.h"
-#include "servo.h"
 #include "utils.h"
 #include "drv8301.h"
 
@@ -62,6 +60,13 @@ void hw_init_gpio(void) {
 #endif
 
 	ENABLE_GATE();
+
+	// Current filter
+	palSetPadMode(GPIOD, 2,
+			PAL_MODE_OUTPUT_PUSHPULL |
+			PAL_STM32_OSPEED_HIGHEST);
+
+	CURRENT_FILTER_OFF();
 
 	// GPIOA Configuration: Channel 1 to 3 as alternate function push-pull
 	palSetPadMode(GPIOA, 8, PAL_MODE_ALTERNATE(GPIO_AF_TIM1) |
@@ -142,22 +147,6 @@ void hw_setup_adc_channels(void) {
 	ADC_InjectedChannelConfig(ADC1, ADC_Channel_10, 3, ADC_SampleTime_15Cycles);
 	ADC_InjectedChannelConfig(ADC2, ADC_Channel_11, 3, ADC_SampleTime_15Cycles);
 	ADC_InjectedChannelConfig(ADC3, ADC_Channel_12, 3, ADC_SampleTime_15Cycles);
-}
-
-void hw_setup_servo_outputs(void) {
-	// Set up GPIO ports
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
-
-	servos[0].gpio = GPIOB;
-	servos[0].pin = 5;
-	servos[0].offset = 0;
-	servos[0].pos = 128;
-
-	servos[1].gpio = GPIOD;
-	servos[1].pin = 2;
-	servos[1].offset = 0;
-	servos[1].pos = 0;
 }
 
 void hw_start_i2c(void) {
@@ -253,5 +242,3 @@ void hw_try_restore_i2c(void) {
 		i2cReleaseBus(&HW_I2C_DEV);
 	}
 }
-
-#endif

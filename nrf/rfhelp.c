@@ -50,9 +50,9 @@ bool rfhelp_init(void) {
 	address_length = 3; // We assume length 3
 
 	// This should not happen
-	if (address_length > 5 || address_length < 3) {
-		address_length = 3;
-	}
+//	if (address_length > 5 || address_length < 3) {
+//		address_length = 3;
+//	}
 
 	// Try a read and write to see if the SPI communication works
 	char addr_old[3];
@@ -131,10 +131,12 @@ void rfhelp_restart(void) {
 	rf_set_tx_addr(tx_addr, address_length);
 	rf_set_rx_addr(0, rx_addr[0], address_length);
 
-	rf_power_up();
-	rf_mode_rx();
-	rf_flush_all();
-	rf_clear_irq();
+	if (nrf_conf.power != NRF_POWER_OFF) {
+		rf_power_up();
+		rf_mode_rx();
+	}
+		rf_flush_all();
+		rf_clear_irq();
 
 	chMtxUnlock(&rf_mutex);
 }

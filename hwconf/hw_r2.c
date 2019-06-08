@@ -23,12 +23,10 @@
  */
 
 #include "hw.h"
-#ifdef HW_VERSION_R2
 
 #include "ch.h"
 #include "hal.h"
 #include "stm32f4xx_conf.h"
-#include "servo.h"
 
 // Variables
 static volatile bool i2c_running = false;
@@ -144,22 +142,6 @@ void hw_setup_adc_channels(void) {
 	ADC_InjectedChannelConfig(ADC2, ADC_Channel_5, 2, ADC_SampleTime_15Cycles);
 }
 
-void hw_setup_servo_outputs(void) {
-	// Set up GPIO ports
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
-
-	servos[0].gpio = GPIOB;
-	servos[0].pin = 5;
-	servos[0].offset = 0;
-	servos[0].pos = 128;
-
-	servos[1].gpio = GPIOD;
-	servos[1].pin = 2;
-	servos[1].offset = 0;
-	servos[1].pos = 0;
-}
-
 void hw_start_i2c(void) {
 	i2cAcquireBus(&HW_I2C_DEV);
 
@@ -253,5 +235,3 @@ void hw_try_restore_i2c(void) {
 		i2cReleaseBus(&HW_I2C_DEV);
 	}
 }
-
-#endif
