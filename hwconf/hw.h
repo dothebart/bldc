@@ -329,6 +329,10 @@
 #define HW_PERMANENT_NRF_FAILED_HOOK()
 #endif
 
+#ifndef HW_EARLY_INIT
+#define HW_EARLY_INIT()
+#endif
+
 // Default ID
 #ifndef HW_DEFAULT_ID
 #define HW_DEFAULT_ID			(APPCONF_CONTROLLER_ID >= 0 ? APPCONF_CONTROLLER_ID : hw_id_from_uuid())
@@ -347,6 +351,10 @@
 
 #ifndef HW_FOC_CURRENT_FILTER_LIM
 #define HW_FOC_CURRENT_FILTER_LIM	0.05, 1.0
+#endif
+
+#ifndef COMM_USE_USB
+#define COMM_USE_USB				1
 #endif
 
 // Functions

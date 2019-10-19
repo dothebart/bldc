@@ -460,6 +460,35 @@ int bm_write_flash(uint32_t addr, const void *data, uint32_t len) {
 }
 
 /**
+ * Read target memory
+ *
+ * @param addr
+ * Address to read from
+ *
+ * @param data
+ * Store the data here
+ *
+ * @param len
+ * Length of the data
+ *
+ * @return
+ * -2: Read failed
+ * -1: Not connected
+ *  1: Success
+ */
+int bm_mem_read(uint32_t addr, void *data, uint32_t len) {
+	int ret = -1;
+
+	if (cur_target) {
+		target_print_en = false;
+		target_flash_done(cur_target);
+		ret = target_mem_read(cur_target, data, addr, len) ? -2 : 1;
+	}
+
+	return ret;
+}
+
+/**
  * Reboot target.
  *
  * @return
@@ -513,8 +542,8 @@ void bm_change_swd_pins(stm32_gpio_t *swdio_port, int swdio_pin,
 	bm_set_enabled(false);
 	platform_swdio_port = swdio_port;
 	platform_swdio_pin = swdio_pin;
-	platform_swdio_port = swclk_port;
-	platform_swdio_pin = swclk_pin;
+	platform_swclk_port = swclk_port;
+	platform_swclk_pin = swclk_pin;
 }
 
 /**
@@ -524,6 +553,6 @@ void bm_default_swd_pins(void) {
 	bm_set_enabled(false);
 	platform_swdio_port = SWDIO_PORT_DEFAULT;
 	platform_swdio_pin = SWDIO_PIN_DEFAULT;
-	platform_swdio_port = SWCLK_PORT_DEFAULT;
-	platform_swdio_pin = SWCLK_PIN_DEFAULT;
+	platform_swclk_port = SWCLK_PORT_DEFAULT;
+	platform_swclk_pin = SWCLK_PIN_DEFAULT;
 }
