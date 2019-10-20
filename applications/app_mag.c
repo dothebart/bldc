@@ -7,6 +7,7 @@
 #include "commands.h"
 #include "timeout.h"
 #include "utils.h"
+#include "app.h"
 
 #include <math.h>
 
@@ -107,6 +108,8 @@ const char *magCommands[] = {
 int testint = 1337;
 int breakactive = 0;
 void killswitch_state_command(int argc, const char ** argv) {
+  (void) argc;
+  (void) argv;
 	commands_printf("Current killswitch status: %d - %d - %d - %g %g %g frpm: %g wrpm: %g hrpm: %g | %d | %d",
 			killswitch_deployed, rangeswitch_deployed, deltaT,
 			(double)adc2_value,  (double)adc1_value, (double)adc1_value1,
@@ -149,7 +152,7 @@ static THD_FUNCTION(mag_thread, arg) {
 		// ============================================
 		// Read & map the kill switch
 		
-		float pot = (float)ADC_Value[ADC_IND_EXT2];
+		float pot = app_adc_get_voltage2(); // (float)ADC_Value[ADC_IND_EXT2];
 		pot /= 4095.0;
 		pot *= V_REG;
 		adc2_value = pot;
@@ -230,14 +233,14 @@ static THD_FUNCTION(mag_thread, arg) {
 		pwr = utils_throttle_curve(pwr, config.throttle_exp, config.throttle_exp_brake, config.throttle_exp_mode);
 
 		// Apply ramping
-		static systime_t last_time = 0;
+		static systime_t this_last_time = 0;
 		static float pwr_ramp = 0.0;
 		const float ramp_time = fabsf(pwr) > fabsf(pwr_ramp) ? config.ramp_time_pos : config.ramp_time_neg;
 
 		if (ramp_time > 0.01) {
-			const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(last_time)) / (ramp_time * 1000.0);
+			const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(this_last_time)) / (ramp_time * 1000.0);
 			utils_step_towards(&pwr_ramp, pwr, ramp_step);
-			last_time = chVTGetSystemTimeX();
+			this_last_time = chVTGetSystemTimeX();
 			pwr = pwr_ramp;
 		}
 
@@ -245,10 +248,10 @@ static THD_FUNCTION(mag_thread, arg) {
 
 		
 		float rpm_local = mc_interface_get_rpm();
-		float rpm_lowest = rpm_local;
+		// float rpm_lowest = rpm_local;
 
 		static float current = 0.0;
-		bool current_mode_brake = false;
+		// bool current_mode_brake = false;
 		const volatile mc_configuration *mcconf = mc_interface_get_configuration();
 		
 		// Reset timeout
